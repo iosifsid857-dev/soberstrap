@@ -35,6 +35,9 @@ GAMES_CACHE = f"{HOME}/games.json"
 ICONS_DIR = f"{HOME}/icons"
 SOBER_LOGS = f"{SOBER_DATA}/sober_logs"
 HERE = os.path.dirname(os.path.realpath(__file__))
+AUTOSTART = os.path.expanduser("~/.config/autostart/soberstrap-overlay.desktop")
+sys.path.insert(0, HERE)
+import themes  # noqa: E402 — рядом с этим файлом
 
 CURSOR_DIR = "content/textures/Cursors/KeyboardMouse"
 CURSOR_FILES = {"ArrowFarCursor.png": "normal", "ArrowCursor.png": "hover"}
@@ -66,6 +69,7 @@ DEFAULT_STATE = {
     "font": "off", "font_file": "",
     "mods": {},
     "graphics_mode": "quality", "quality": 0, "msaa": 0, "textures": -1, "grass": True, "gray_sky": False,
+    "theme": "off", "theme_parts": list(themes.PARTS),
 }
 
 # Tokyo Night, спокойно
@@ -312,6 +316,9 @@ def font_file(family, weight):
 def build_files(state):
     """Что положить в overlay: {путь внутри overlay: ('image', QImage) | ('copy', файл)}."""
     files = {}
+    if state["theme"] in themes.THEMES:  # своя настройка курсора ниже перекрывает курсор темы
+        for rel, img in themes.theme_files(state["theme"], state["theme_parts"]).items():
+            files[rel] = ("image", img)
     if state["cursor"] == "file" and state["cursor_file"]:
         img = custom_cursor(state["cursor_file"])
         for name in CURSOR_FILES:
@@ -359,7 +366,8 @@ def apply_mods(state):
         dst = f"{OVERLAY}/{rel}"
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         if kind == "image":
-            if not src.save(dst, "PNG"):
+            fmt = {"jpg": "JPG", "dds": "DDS"}.get(rel.rsplit(".", 1)[-1], "PNG")
+            if not src.save(dst, fmt):
                 raise OSError(f"не удалось записать {dst}")
         else:
             shutil.copyfile(src, dst)
@@ -390,6 +398,28 @@ def apply_config(state):
     write_sober_config(head, cfg)
 
 
+def set_overlay(state):
+    """Снег поверх игры: автозапуск наблюдателя overlay.py --watch, если в теме он включён."""
+    on = state["theme"] in themes.THEMES and "overlay" in state["theme_parts"]
+    if not on:
+        if os.path.exists(AUTOSTART):
+            os.remove(AUTOSTART)
+        return  # уже запущенный наблюдатель сам спрячет окно: он перечитывает state.json
+    os.makedirs(os.path.dirname(AUTOSTART), exist_ok=True)
+    with open(AUTOSTART, "w") as f:
+        f.write("[Desktop Entry]\nType=Application\nName=SoberStrap: снег поверх Roblox\n"
+                f"Exec=python3 {HERE}/overlay.py --watch\nNoDisplay=true\nX-KDE-autostart-phase=2\n")
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                if b"overlay.py\0--watch" in f.read():
+                    return
+        except OSError:
+            pass
+    subprocess.Popen([sys.executable, f"{HERE}/overlay.py", "--watch"], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 # ---------- окно ----------
 
 class Loader(QObject):
@@ -413,6 +443,7 @@ class Window(QWidget):
 
         tabs = QTabWidget()
         tabs.addTab(self.mods_tab(), "Моды")
+        tabs.addTab(self.themes_tab(), "Темы")
         tabs.addTab(self.graphics_tab(), "Графика")
         tabs.addTab(self.history_tab(), "История игр")
         tabs.addTab(self.about_tab(), "О программе")
@@ -493,6 +524,55 @@ class Window(QWidget):
         lay.addStretch(1)
         self.update_preview()
         return w
+
+    def themes_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        box = QGroupBox("Тема")
+        f = QVBoxLayout(box)
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Без темы", "off")
+        for key, t in themes.THEMES.items():
+            self.theme_combo.addItem(t["name"], key)
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.state["theme"])))
+        self.theme_combo.currentIndexChanged.connect(self.update_theme_preview)
+        f.addWidget(self.theme_combo)
+        self.theme_preview = QLabel()
+        self.theme_preview.setFixedHeight(96)
+        f.addWidget(self.theme_preview)
+        lay.addWidget(box)
+
+        box = QGroupBox("Что менять")
+        f = QVBoxLayout(box)
+        self.part_checks = {}
+        for key, label in themes.PARTS.items():
+            cb = QCheckBox(label)
+            cb.setChecked(key in self.state["theme_parts"])
+            self.part_checks[key] = cb
+            f.addWidget(cb)
+        f.addWidget(hint("Солнце и луна меняются в играх, где автор оставил стандартные. Небо, которое игра "
+                         "ставит сама, не меняется. Курсор на вкладке «Моды» важнее курсора темы."))
+        f.addWidget(hint("Снег поверх игры — отдельное прозрачное окно над Roblox, клики проходят сквозь него. "
+                         "Для Хэллоуина это летящие угольки. Включается сам, когда запущен Roblox."))
+        lay.addWidget(box)
+        lay.addStretch(1)
+        self.update_theme_preview()
+        return w
+
+    def update_theme_preview(self):
+        key = self.theme_combo.currentData()
+        if key not in themes.THEMES:
+            self.theme_preview.clear()
+            return
+        imgs = [themes.cursor(key, False).scaled(80, 80), themes.moon(key).scaled(80, 80),
+                themes.sun(key).scaled(80, 80), themes.spinner(key).scaled(80, 80), themes.sparkle(key).scaled(80, 80)]
+        pix = QPixmap(5 * 92, 92)
+        pix.fill(QColor(COLORS["bg"]))
+        p = QPainter(pix)
+        for i, img in enumerate(imgs):
+            p.drawImage(i * 92 + 6, 6, img)
+        p.end()
+        self.theme_preview.setPixmap(pix)
 
     def graphics_tab(self):
         w = QWidget()
@@ -695,6 +775,8 @@ class Window(QWidget):
         s["grass"] = self.grass_check.isChecked()
         s["gray_sky"] = self.sky_check.isChecked()
         s["sober"] = {k: cb.isChecked() for k, cb in self.sober_checks.items()}
+        s["theme"] = self.theme_combo.currentData()
+        s["theme_parts"] = [k for k, cb in self.part_checks.items() if cb.isChecked()]
         return s
 
     def apply(self):
@@ -707,6 +789,7 @@ class Window(QWidget):
             n = apply_mods(state)
             apply_config(state)
             save_json(STATE, state)
+            set_overlay(state)
         except Exception as e:  # noqa: BLE001 — показываем пользователю любую ошибку
             QMessageBox.warning(self, APP, f"Не получилось применить:\n{e}")
             return False
@@ -726,6 +809,7 @@ class Window(QWidget):
         state = {**DEFAULT_STATE, "graphics_mode": "balanced"}
         apply_config(state)
         save_json(STATE, state)
+        set_overlay(state)
         QMessageBox.information(self, APP, "Всё вернул как было. Окно закроется.")
         self.close()
 
