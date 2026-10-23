@@ -4,18 +4,22 @@
 Моды кладутся в asset_overlay Sober: файлы оттуда Roblox берёт вместо своих.
 Меняется только то, что видит и слышит сам игрок; игровой процесс не трогается.
 """
+import glob
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
+import urllib.request
+from datetime import datetime, timezone
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QObject, QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QSlider, QTabWidget, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QSlider, QTabWidget, QVBoxLayout, QWidget,
 )
 
 APP = "SoberStrap"
@@ -27,6 +31,9 @@ HOME = os.path.expanduser(os.environ.get("SOBERSTRAP_HOME", "~/.local/share/sobe
 STATE = f"{HOME}/state.json"
 MANIFEST = f"{HOME}/applied.json"
 MODS_DIR = f"{HOME}/mods"
+GAMES_CACHE = f"{HOME}/games.json"
+ICONS_DIR = f"{HOME}/icons"
+SOBER_LOGS = f"{SOBER_DATA}/sober_logs"
 HERE = os.path.dirname(os.path.realpath(__file__))
 
 CURSOR_DIR = "content/textures/Cursors/KeyboardMouse"
@@ -45,6 +52,14 @@ FONT_TARGETS = {  # файл Roblox -> вес
 # Флаги из официального списка разрешённых (с сентября 2025 остальные Roblox игнорирует)
 OUR_FLAGS = ["DFIntDebugFRMQualityLevelOverride", "FIntDebugForceMSAASamples", "DFFlagTextureQualityOverrideEnabled",
              "DFIntTextureQualityOverride", "FIntFRMMaxGrassDistance", "FIntFRMMinGrassDistance", "FFlagDebugSkyGray"]
+
+SOBER_TOGGLES = {  # настройки самого Sober в config.json
+    "discord_rpc_enabled": "Показывать игру в статусе Discord",
+    "discord_rpc_show_join_button": "Кнопка «Присоединиться» в Discord для друзей",
+    "server_location_indicator_enabled": "Показывать, в какой стране сервер",
+    "close_on_leave": "Закрывать Roblox при выходе из игры",
+    "enable_gamemode": "GameMode (система отдаёт игре больше ресурсов)",
+}
 
 DEFAULT_STATE = {
     "cursor": "off", "cursor_file": "",
@@ -136,6 +151,83 @@ def folder_mods():
         mods.append({"id": name, "path": path, "name": meta.get("name", name),
                      "description": meta.get("description", "")})
     return mods
+
+
+# ---------- история игр ----------
+
+JOIN_RE = re.compile(r"Roblox: (\S+?Z),.*Joining game '([0-9a-f-]+)' place (\d+)")
+TS_RE = re.compile(r"Roblox: (\d{4}-\d\d-\d\dT[\d:.]+Z),")
+
+
+def parse_ts(s):
+    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+
+
+def game_history():
+    """Сессии из логов Sober: [{place, job, start, end}], новые сверху."""
+    sessions = []
+    for path in sorted(glob.glob(f"{SOBER_LOGS}/*.log")):
+        if os.path.islink(path):
+            continue
+        cur, last_ts = None, None
+        with open(path, errors="replace") as f:
+            for line in f:
+                m = TS_RE.search(line)
+                if m:
+                    last_ts = m.group(1)
+                m = JOIN_RE.search(line)
+                if m:
+                    if cur:
+                        sessions.append(cur)
+                    cur = {"place": m.group(3), "job": m.group(2), "start": m.group(1), "end": None}
+                elif cur and ("onGameLeaveBegin" in line or '"type":"game_left"' in line):
+                    cur["end"] = last_ts
+                    sessions.append(cur)
+                    cur = None
+        if cur:  # лог оборвался — считаем до последней строки
+            cur["end"] = last_ts
+            sessions.append(cur)
+    return sessions[::-1]
+
+
+def http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "SoberStrap"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+
+
+def fetch_games(places):
+    """Название и иконка игр через публичное API Roblox; кэш в games.json."""
+    cache = load_json(GAMES_CACHE, {})
+    todo = [p for p in places if p not in cache]
+    universes = {}
+    for place in todo:
+        try:
+            universes[place] = str(http_json(f"https://apis.roblox.com/universes/v1/places/{place}/universe")["universeId"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    if universes:
+        ids = ",".join(sorted(set(universes.values())))
+        try:
+            names = {str(g["id"]): g["name"] for g in http_json(f"https://games.roblox.com/v1/games?universeIds={ids}")["data"]}
+            icons = {str(i["targetId"]): i.get("imageUrl") for i in http_json(
+                f"https://thumbnails.roblox.com/v1/games/icons?universeIds={ids}&size=150x150&format=Png")["data"]}
+        except (OSError, ValueError, KeyError):
+            names, icons = {}, {}
+        os.makedirs(ICONS_DIR, exist_ok=True)
+        for place, uni in universes.items():
+            icon = f"{ICONS_DIR}/{uni}.png"
+            if icons.get(uni) and not os.path.exists(icon):
+                try:
+                    req = urllib.request.Request(icons[uni], headers={"User-Agent": "SoberStrap"})
+                    with urllib.request.urlopen(req, timeout=10) as r, open(icon, "wb") as f:
+                        f.write(r.read())
+                except OSError:
+                    pass
+            if uni in names:
+                cache[place] = {"universe": uni, "name": names[uni], "icon": icon if os.path.exists(icon) else ""}
+        save_json(GAMES_CACHE, cache)
+    return cache
 
 
 # ---------- курсоры ----------
@@ -292,10 +384,17 @@ def apply_config(state):
     if state["gray_sky"]:
         flags["FFlagDebugSkyGray"] = True
     cfg["fflags"] = flags
+    for key, value in state.get("sober", {}).items():
+        if key in SOBER_TOGGLES:
+            cfg[key] = value
     write_sober_config(head, cfg)
 
 
 # ---------- окно ----------
+
+class Loader(QObject):
+    done = Signal(dict)
+
 
 def hint(text):
     lbl = QLabel(text)
@@ -315,6 +414,7 @@ class Window(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self.mods_tab(), "Моды")
         tabs.addTab(self.graphics_tab(), "Графика")
+        tabs.addTab(self.history_tab(), "История игр")
         tabs.addTab(self.about_tab(), "О программе")
 
         self.status = hint("")
@@ -440,10 +540,96 @@ class Window(QWidget):
         f.addWidget(self.grass_check)
         f.addWidget(self.sky_check)
         lay.addWidget(box)
+
+        box = QGroupBox("Sober")
+        f = QVBoxLayout(box)
+        try:
+            cfg = read_sober_config()[1]
+        except (OSError, ValueError):
+            cfg = {}
+        self.sober_checks = {}
+        for key, label in SOBER_TOGGLES.items():
+            cb = QCheckBox(label)
+            cb.setChecked(bool(cfg.get(key, False)))
+            self.sober_checks[key] = cb
+            f.addWidget(cb)
+        lay.addWidget(box)
         lay.addWidget(hint("Используются только флаги из официального списка, который Roblox разрешил с сентября 2025. "
                            "Настройки качества в самой игре тоже работают — эти просто сильнее."))
         lay.addStretch(1)
         return w
+
+    def history_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        self.history_list = QListWidget()
+        self.history_list.setIconSize(QSize(48, 48))
+        self.history_list.setStyleSheet(f"QListWidget {{ background: {COLORS['panel']}; border: 1px solid "
+                                        f"{COLORS['line']}; border-radius: 8px; padding: 4px; }}"
+                                        f"QListWidget::item {{ padding: 6px; border-radius: 6px; }}"
+                                        f"QListWidget::item:selected {{ background: {COLORS['line']}; }}")
+        self.history_list.itemDoubleClicked.connect(lambda _: self.play_again(False))
+        lay.addWidget(self.history_list, 1)
+        row = QHBoxLayout()
+        for text, slot in (("Играть снова", lambda: self.play_again(False)),
+                           ("На тот же сервер", lambda: self.play_again(True)),
+                           ("Страница игры", self.open_page)):
+            btn = QPushButton(text)
+            btn.clicked.connect(slot)
+            row.addWidget(btn)
+        row.addStretch(1)
+        lay.addLayout(row)
+        lay.addWidget(hint("Берётся из логов Sober. Названия и иконки игр подгружаются с сайта Roblox. "
+                           "«На тот же сервер» сработает, только если сервер ещё жив."))
+        self.sessions = game_history()
+        self.games = load_json(GAMES_CACHE, {})
+        self.fill_history()
+        self.loader = Loader()
+        self.loader.done.connect(self.on_games)
+        places = sorted({s["place"] for s in self.sessions} - set(self.games))
+        if places:
+            threading.Thread(target=lambda: self.loader.done.emit(fetch_games(places)), daemon=True).start()
+        return w
+
+    def fill_history(self):
+        self.history_list.clear()
+        if not self.sessions:
+            self.history_list.addItem("Пока пусто — поиграй, и здесь появятся игры.")
+            return
+        for s in self.sessions:
+            game = self.games.get(s["place"], {})
+            start = parse_ts(s["start"]).astimezone()
+            text = f"{game.get('name', 'Игра ' + s['place'])}\n{start:%d.%m %H:%M}"
+            if s["end"]:
+                minutes = int((parse_ts(s["end"]) - parse_ts(s["start"])).total_seconds() // 60)
+                text += f"  ·  {minutes // 60} ч {minutes % 60} мин" if minutes >= 60 else f"  ·  {minutes} мин"
+            item = QListWidgetItem(text)
+            if game.get("icon"):
+                item.setIcon(QIcon(game["icon"]))
+            item.setData(Qt.UserRole, s)
+            self.history_list.addItem(item)
+
+    def on_games(self, games):
+        self.games = games
+        self.fill_history()
+
+    def selected_session(self):
+        item = self.history_list.currentItem()
+        return item.data(Qt.UserRole) if item else None
+
+    def play_again(self, same_server):
+        s = self.selected_session()
+        if not s:
+            return
+        url = f"roblox://experiences/start?placeId={s['place']}"
+        if same_server:
+            url += f"&gameInstanceId={s['job']}"
+        subprocess.Popen(["flatpak", "run", SOBER_ID, url], start_new_session=True)
+
+    def open_page(self):
+        s = self.selected_session()
+        if s:
+            subprocess.Popen(["xdg-open", f"https://www.roblox.com/games/{s['place']}"])
 
     def about_tab(self):
         w = QWidget()
@@ -508,6 +694,7 @@ class Window(QWidget):
         s["textures"] = self.tex_combo.currentData()
         s["grass"] = self.grass_check.isChecked()
         s["gray_sky"] = self.sky_check.isChecked()
+        s["sober"] = {k: cb.isChecked() for k, cb in self.sober_checks.items()}
         return s
 
     def apply(self):
