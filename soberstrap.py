@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import QObject, QPointF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QSlider, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -78,6 +78,30 @@ HUD_MODES = {
 HUD_POSITIONS = {"top-left": "Слева сверху", "top-right": "Справа сверху",
                  "bottom-left": "Слева снизу", "bottom-right": "Справа снизу"}
 
+VKBASALT_DIRS = ["/var/lib/flatpak/runtime/org.freedesktop.Platform.VulkanLayer.vkBasalt",
+                 os.path.expanduser("~/.local/share/flatpak/runtime/org.freedesktop.Platform.VulkanLayer.vkBasalt")]
+FILTERS_OUT = os.path.normpath(f"{SOBER_DATA}/../soberstrap-filters")
+FILTERS = {  # ключ: (название, описание, [(uniform, подпись, мин, макс, по умолчанию)])
+    "vivid": ("Сочно", "Бледные цвета становятся живее, яркие не пересвечиваются.",
+              [("VividStrength", "Сила", 0.0, 2.0, 1.0)]),
+    "cinema": ("Кино", "Тёплые света, бирюзовые тени, виньетка и плёночное зерно.",
+               [("CinemaStrength", "Сила", 0.0, 1.0, 1.0)]),
+    "dream": ("Мечта", "Мягкое свечение вокруг ярких мест, пастельные цвета.",
+              [("DreamStrength", "Сила", 0.0, 1.5, 1.0)]),
+    "toon": ("Мультик", "Плоские цвета и чёрные контуры, как в мультфильме.",
+             [("ToonLevels", "Ступени цвета", 3.0, 12.0, 7.0), ("ToonOutline", "Контуры", 0.0, 1.0, 1.0)]),
+    "comic": ("Комикс", "Точечный растр в тенях и контуры, как в напечатанном комиксе.",
+              [("ComicStrength", "Сила", 0.0, 1.0, 1.0)]),
+    "pixel": ("Пиксель-арт", "Крупные пиксели и мало цветов — Roblox как игра с NES.",
+              [("PixelSize", "Размер пикселя", 2.0, 12.0, 4.0), ("PixelColors", "Цветов на канал", 3.0, 16.0, 8.0)]),
+    "retro": ("Ретро-телевизор", "Строки развёртки, маска кинескопа, разъезд цветов.",
+              [("RetroStrength", "Сила", 0.0, 1.0, 1.0)]),
+    "noir": ("Нуар", "Чёрно-белое кино с жёстким контрастом.", [("NoirStrength", "Сила", 0.0, 1.0, 1.0)]),
+    "winter": ("Зима", "Холодные оттенки и иней по краям экрана.", [("WinterStrength", "Сила", 0.0, 1.0, 1.0)]),
+    "halloween": ("Хэллоуин", "Оранжевые света, фиолетовые тени, тёмные края.",
+                  [("HalloweenStrength", "Сила", 0.0, 1.0, 1.0)]),
+}
+
 DEFAULT_STATE = {
     "cursor": "off", "cursor_file": "",
     "font": "off", "font_file": "",
@@ -85,6 +109,7 @@ DEFAULT_STATE = {
     "graphics_mode": "quality", "quality": 0, "msaa": 0, "textures": -1, "grass": True, "gray_sky": False,
     "theme": "off", "theme_parts": list(themes.PARTS),
     "hud": "off", "hud_pos": "top-left",
+    "filter": "off", "filter_params": {}, "sharpen": 0.0,
 }
 
 # Tokyo Night, спокойно
@@ -103,6 +128,7 @@ QLabel#hint {{ color: {COLORS['dim']}; font-size: 12px; }}
 QComboBox, QPushButton {{ background: {COLORS['bg']}; border: 1px solid {COLORS['line']}; border-radius: 6px;
                          padding: 6px 10px; }}
 QPushButton:hover, QComboBox:hover {{ border-color: {COLORS['accent']}; }}
+QPushButton:checked {{ border: 2px solid {COLORS['accent']}; color: {COLORS['accent']}; font-weight: bold; }}
 QPushButton#primary {{ background: {COLORS['accent']}; color: {COLORS['bg']}; border: none; font-weight: bold; }}
 QPushButton#primary:hover {{ background: #89b4fa; }}
 QComboBox QAbstractItemView {{ background: {COLORS['panel']}; selection-background-color: {COLORS['line']}; }}
@@ -419,13 +445,43 @@ def mangohud_installed():
     return any(os.path.isdir(d) for d in MANGOHUD_DIRS)
 
 
-def apply_hud(state):
-    """Счётчик FPS — MangoHud через переменные окружения Sober (flatpak override --user)."""
+def vkbasalt_installed():
+    return any(os.path.isdir(d) for d in VKBASALT_DIRS)
+
+
+def write_filter_config(state):
+    """Шейдеры и vkBasalt.conf — в папку данных Sober: из песочницы виден только её собственный каталог."""
+    shutil.rmtree(FILTERS_OUT, ignore_errors=True)
+    shutil.copytree(f"{HERE}/filters", FILTERS_OUT)
+    effects, lines = [], []
+    if state["sharpen"] > 0:
+        effects.append("cas")
+        lines.append(f"casSharpness = {state['sharpen']:.2f}")
+    key = state["filter"]
+    if key in FILTERS:
+        effects.append(key)
+        lines.append(f"{key} = {FILTERS_OUT}/{key}.fx")
+        for uniform, _, lo, hi, default in FILTERS[key][2]:
+            value = state["filter_params"].get(uniform, default)
+            lines.append(f"{uniform} = {min(hi, max(lo, value)):g}")
+    lines += [f"reshadeIncludePath = {FILTERS_OUT}", f"reshadeTexturePath = {FILTERS_OUT}"]
+    with open(f"{FILTERS_OUT}/vkBasalt.conf", "w") as f:
+        f.write(f"effects = {':'.join(effects)}\n" + "\n".join(lines) + "\n")
+    return bool(effects)
+
+
+def apply_env(state):
+    """Счётчик FPS (MangoHud) и фильтры (vkBasalt) — переменные окружения Sober через flatpak override --user."""
+    args = []
     opts = HUD_MODES.get(state["hud"], HUD_MODES["off"])[1]
     if opts and mangohud_installed():
-        args = ["--env=MANGOHUD=1", f"--env=MANGOHUD_CONFIG={opts},position={state['hud_pos']},{HUD_STYLE}"]
+        args += ["--env=MANGOHUD=1", f"--env=MANGOHUD_CONFIG={opts},position={state['hud_pos']},{HUD_STYLE}"]
     else:
-        args = ["--unset-env=MANGOHUD", "--unset-env=MANGOHUD_CONFIG"]
+        args += ["--unset-env=MANGOHUD", "--unset-env=MANGOHUD_CONFIG"]
+    if vkbasalt_installed() and write_filter_config(state):
+        args += ["--env=ENABLE_VKBASALT=1", f"--env=VKBASALT_CONFIG_FILE={FILTERS_OUT}/vkBasalt.conf"]
+    else:
+        args += ["--unset-env=ENABLE_VKBASALT", "--unset-env=VKBASALT_CONFIG_FILE"]
     subprocess.run(["flatpak", "override", "--user", *args, SOBER_ID], check=True, capture_output=True)
 
 
@@ -475,6 +531,7 @@ class Window(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self.mods_tab(), "Моды")
         tabs.addTab(self.themes_tab(), "Темы")
+        tabs.addTab(self.filters_tab(), "Фильтры")
         tabs.addTab(self.graphics_tab(), "Графика")
         tabs.addTab(self.history_tab(), "История игр")
         tabs.addTab(self.about_tab(), "О программе")
@@ -605,6 +662,64 @@ class Window(QWidget):
             p.drawImage(i * 92 + 6, 6, img)
         p.end()
         self.theme_preview.setPixmap(pix)
+
+    def filters_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        if not vkbasalt_installed():
+            lay.addWidget(hint("Для фильтров нужно расширение vkBasalt для Flatpak (см. README: "
+                               "scripts/build-vkbasalt-ext.sh)."))
+        self.filter_key = self.state["filter"]
+        self.filter_buttons = {}
+        grid = QGridLayout()
+        for i, (key, (name, desc, _)) in enumerate([("off", ("Без фильтра", "Как задумал Roblox.", []))]
+                                                   + list(FILTERS.items())):
+            btn = QPushButton(name)
+            btn.setCheckable(True)
+            btn.setToolTip(desc)
+            btn.setMinimumHeight(40)
+            btn.clicked.connect(lambda _=False, k=key: self.pick_filter(k))
+            self.filter_buttons[key] = btn
+            grid.addWidget(btn, i // 3, i % 3)
+        lay.addLayout(grid)
+        self.filter_desc = hint("")
+        lay.addWidget(self.filter_desc)
+
+        self.param_box = QGroupBox("Настройка")
+        self.param_form = QFormLayout(self.param_box)
+        self.param_sliders = {}
+        lay.addWidget(self.param_box)
+
+        box = QGroupBox("Чёткость")
+        form = QFormLayout(box)
+        self.sharpen_slider = QSlider(Qt.Horizontal)
+        self.sharpen_slider.setRange(0, 100)
+        self.sharpen_slider.setValue(int(self.state["sharpen"] * 100))
+        form.addRow("Резкость (AMD CAS)", self.sharpen_slider)
+        form.addRow(hint("Работает с любым фильтром и без него: картинка чётче, особенно при сглаживании."))
+        lay.addWidget(box)
+        lay.addWidget(hint("Фильтры рисуются поверх готового кадра (vkBasalt, как ReShade на Windows). "
+                           "Другие игроки их не видят, игра не меняется. Меняются после перезапуска Roblox."))
+        lay.addStretch(1)
+        self.pick_filter(self.filter_key if self.filter_key in FILTERS else "off")
+        return w
+
+    def pick_filter(self, key):
+        self.filter_key = key
+        for k, btn in self.filter_buttons.items():
+            btn.setChecked(k == key)
+        self.filter_desc.setText(FILTERS[key][1] if key in FILTERS else "Без фильтра — как задумал Roblox.")
+        while self.param_form.rowCount():
+            self.param_form.removeRow(0)
+        self.param_sliders = {}
+        params = FILTERS[key][2] if key in FILTERS else []
+        for uniform, label, lo, hi, default in params:
+            sl = QSlider(Qt.Horizontal)
+            sl.setRange(int(lo * 100), int(hi * 100))
+            sl.setValue(int(self.state["filter_params"].get(uniform, default) * 100))
+            self.param_sliders[uniform] = sl
+            self.param_form.addRow(label, sl)
+        self.param_box.setVisible(bool(params))
 
     def graphics_tab(self):
         w = QWidget()
@@ -825,6 +940,9 @@ class Window(QWidget):
         s["grass"] = self.grass_check.isChecked()
         s["gray_sky"] = self.sky_check.isChecked()
         s["sober"] = {k: cb.isChecked() for k, cb in self.sober_checks.items()}
+        s["filter"] = self.filter_key
+        s["filter_params"] = {**s["filter_params"], **{u: sl.value() / 100 for u, sl in self.param_sliders.items()}}
+        s["sharpen"] = self.sharpen_slider.value() / 100
         s["hud"] = self.hud_combo.currentData()
         s["hud_pos"] = self.hud_pos_combo.currentData()
         s["theme"] = self.theme_combo.currentData()
@@ -840,7 +958,7 @@ class Window(QWidget):
             state = self.collect()
             n = apply_mods(state)
             apply_config(state)
-            apply_hud(state)
+            apply_env(state)
             save_json(STATE, state)
             set_overlay(state)
         except Exception as e:  # noqa: BLE001 — показываем пользователю любую ошибку
@@ -861,7 +979,7 @@ class Window(QWidget):
         clear_overlay()
         state = {**DEFAULT_STATE, "graphics_mode": "balanced"}
         apply_config(state)
-        apply_hud(state)
+        apply_env(state)
         save_json(STATE, state)
         set_overlay(state)
         QMessageBox.information(self, APP, "Всё вернул как было. Окно закроется.")
