@@ -64,12 +64,27 @@ SOBER_TOGGLES = {  # настройки самого Sober в config.json
     "enable_gamemode": "GameMode (система отдаёт игре больше ресурсов)",
 }
 
+MANGOHUD_DIRS = ["/var/lib/flatpak/runtime/org.freedesktop.Platform.VulkanLayer.MangoHud",
+                 os.path.expanduser("~/.local/share/flatpak/runtime/org.freedesktop.Platform.VulkanLayer.MangoHud")]
+HUD_STYLE = ("font_size=18,background_alpha=0.35,round_corners=8,background_color=1a1b26,text_color=c0caf5,"
+             "gpu_color=7aa2f7,cpu_color=9ece6a,ram_color=bb9af7,vram_color=bb9af7,engine_color=7aa2f7")
+HUD_MODES = {
+    "off": ("Выключен", None),
+    "fps": ("Только FPS", "fps_only"),
+    "temps": ("FPS, загрузка и температура", "fps,frametime=0,gpu_stats,gpu_temp,cpu_stats,cpu_temp,ram"),
+    "full": ("Подробно (с графиком кадров)", "fps,frame_timing,gpu_stats,gpu_temp,gpu_core_clock,vram,cpu_stats,"
+                                             "cpu_temp,ram"),
+}
+HUD_POSITIONS = {"top-left": "Слева сверху", "top-right": "Справа сверху",
+                 "bottom-left": "Слева снизу", "bottom-right": "Справа снизу"}
+
 DEFAULT_STATE = {
     "cursor": "off", "cursor_file": "",
     "font": "off", "font_file": "",
     "mods": {},
     "graphics_mode": "quality", "quality": 0, "msaa": 0, "textures": -1, "grass": True, "gray_sky": False,
     "theme": "off", "theme_parts": list(themes.PARTS),
+    "hud": "off", "hud_pos": "top-left",
 }
 
 # Tokyo Night, спокойно
@@ -316,8 +331,10 @@ def font_file(family, weight):
 def build_files(state):
     """Что положить в overlay: {путь внутри overlay: ('image', QImage) | ('copy', файл)}."""
     files = {}
-    if state["theme"] in themes.THEMES:  # своя настройка курсора ниже перекрывает курсор темы
-        for rel, img in themes.theme_files(state["theme"], state["theme_parts"]).items():
+    theme = themes.active(state["theme"])
+    state["theme_applied"] = theme
+    if theme in themes.THEMES:  # своя настройка курсора ниже перекрывает курсор темы
+        for rel, img in themes.theme_files(theme, state["theme_parts"]).items():
             files[rel] = ("image", img)
     if state["cursor"] == "file" and state["cursor_file"]:
         img = custom_cursor(state["cursor_file"])
@@ -398,9 +415,23 @@ def apply_config(state):
     write_sober_config(head, cfg)
 
 
+def mangohud_installed():
+    return any(os.path.isdir(d) for d in MANGOHUD_DIRS)
+
+
+def apply_hud(state):
+    """Счётчик FPS — MangoHud через переменные окружения Sober (flatpak override --user)."""
+    opts = HUD_MODES.get(state["hud"], HUD_MODES["off"])[1]
+    if opts and mangohud_installed():
+        args = ["--env=MANGOHUD=1", f"--env=MANGOHUD_CONFIG={opts},position={state['hud_pos']},{HUD_STYLE}"]
+    else:
+        args = ["--unset-env=MANGOHUD", "--unset-env=MANGOHUD_CONFIG"]
+    subprocess.run(["flatpak", "override", "--user", *args, SOBER_ID], check=True, capture_output=True)
+
+
 def set_overlay(state):
-    """Снег поверх игры: автозапуск наблюдателя overlay.py --watch, если в теме он включён."""
-    on = state["theme"] in themes.THEMES and "overlay" in state["theme_parts"]
+    """Наблюдатель overlay.py --watch в автозапуске: снег поверх игры и смена темы «по дате»."""
+    on = state["theme"] == "auto" or (state["theme"] in themes.THEMES and "overlay" in state["theme_parts"])
     if not on:
         if os.path.exists(AUTOSTART):
             os.remove(AUTOSTART)
@@ -532,6 +563,7 @@ class Window(QWidget):
         f = QVBoxLayout(box)
         self.theme_combo = QComboBox()
         self.theme_combo.addItem("Без темы", "off")
+        self.theme_combo.addItem("Сама по дате (Хэллоуин, Новый год)", "auto")
         for key, t in themes.THEMES.items():
             self.theme_combo.addItem(t["name"], key)
         self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(self.state["theme"])))
@@ -560,7 +592,7 @@ class Window(QWidget):
         return w
 
     def update_theme_preview(self):
-        key = self.theme_combo.currentData()
+        key = themes.active(self.theme_combo.currentData())
         if key not in themes.THEMES:
             self.theme_preview.clear()
             return
@@ -619,6 +651,24 @@ class Window(QWidget):
         self.sky_check.setChecked(self.state["gray_sky"])
         f.addWidget(self.grass_check)
         f.addWidget(self.sky_check)
+        lay.addWidget(box)
+
+        box = QGroupBox("Счётчик FPS")
+        form = QFormLayout(box)
+        self.hud_combo = QComboBox()
+        for key, (name, _) in HUD_MODES.items():
+            self.hud_combo.addItem(name, key)
+        self.hud_combo.setCurrentIndex(max(0, self.hud_combo.findData(self.state["hud"])))
+        self.hud_pos_combo = QComboBox()
+        for key, name in HUD_POSITIONS.items():
+            self.hud_pos_combo.addItem(name, key)
+        self.hud_pos_combo.setCurrentIndex(max(0, self.hud_pos_combo.findData(self.state["hud_pos"])))
+        form.addRow("Показывать", self.hud_combo)
+        form.addRow("Где", self.hud_pos_combo)
+        form.addRow(hint("MangoHud. В игре прячется и показывается клавишами правый Shift + F12."
+                         if mangohud_installed() else
+                         "Нужен MangoHud: flatpak install flathub "
+                         "runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/26.08"))
         lay.addWidget(box)
 
         box = QGroupBox("Sober")
@@ -775,6 +825,8 @@ class Window(QWidget):
         s["grass"] = self.grass_check.isChecked()
         s["gray_sky"] = self.sky_check.isChecked()
         s["sober"] = {k: cb.isChecked() for k, cb in self.sober_checks.items()}
+        s["hud"] = self.hud_combo.currentData()
+        s["hud_pos"] = self.hud_pos_combo.currentData()
         s["theme"] = self.theme_combo.currentData()
         s["theme_parts"] = [k for k, cb in self.part_checks.items() if cb.isChecked()]
         return s
@@ -788,6 +840,7 @@ class Window(QWidget):
             state = self.collect()
             n = apply_mods(state)
             apply_config(state)
+            apply_hud(state)
             save_json(STATE, state)
             set_overlay(state)
         except Exception as e:  # noqa: BLE001 — показываем пользователю любую ошибку
@@ -808,6 +861,7 @@ class Window(QWidget):
         clear_overlay()
         state = {**DEFAULT_STATE, "graphics_mode": "balanced"}
         apply_config(state)
+        apply_hud(state)
         save_json(STATE, state)
         set_overlay(state)
         QMessageBox.information(self, APP, "Всё вернул как было. Окно закроется.")
@@ -818,6 +872,16 @@ def main():
     if not os.path.exists(SOBER_CONFIG):
         print("Sober не найден: поставь его (flatpak install flathub org.vinegarhq.Sober) и запусти один раз.")
         sys.exit(1)
+    if "--apply" in sys.argv:  # без окна: переложить моды по сохранённым настройкам
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        app = QApplication(sys.argv)
+        if sober_running():
+            sys.exit("Roblox запущен — применю в следующий раз")
+        state = {**DEFAULT_STATE, **load_json(STATE, {})}
+        n = apply_mods(state)
+        save_json(STATE, state)
+        print(f"применено файлов: {n}, тема: {state['theme_applied']}")
+        return
     app = QApplication(sys.argv)
     app.setApplicationName(APP)
     app.setDesktopFileName("soberstrap")

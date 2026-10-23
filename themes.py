@@ -5,6 +5,7 @@
 """
 import math
 import random
+from datetime import date
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QConicalGradient, QImage, QPainter, QPainterPath, QPen, QRadialGradient
@@ -27,6 +28,19 @@ THEMES = {
         "overlay": "embers",
     },
 }
+
+def active(theme, today=None):
+    """«auto» — тема по дате: Хэллоуин 15.10–3.11, Новый год 10.12–14.01."""
+    if theme != "auto":
+        return theme
+    d = today or date.today()
+    md = (d.month, d.day)
+    if (10, 15) <= md <= (11, 3):
+        return "halloween"
+    if md >= (12, 10) or md <= (1, 14):
+        return "newyear"
+    return "off"
+
 
 PARTS = {
     "cursor": "Курсор",

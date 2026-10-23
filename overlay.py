@@ -9,6 +9,7 @@ import json
 import math
 import os
 import random
+import subprocess
 import sys
 
 if os.environ.get("WAYLAND_DISPLAY"):
@@ -18,6 +19,10 @@ if os.environ.get("WAYLAND_DISPLAY"):
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QRadialGradient
 from PySide6.QtWidgets import QApplication, QWidget
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+import themes  # noqa: E402
 
 HOME = os.path.expanduser(os.environ.get("SOBERSTRAP_HOME", "~/.local/share/soberstrap"))
 STATE = f"{HOME}/state.json"
@@ -36,15 +41,25 @@ def sober_running():
     return False
 
 
-def wanted_style():
+def load_state():
     try:
         with open(STATE) as f:
-            s = json.load(f)
+            return json.load(f)
     except (OSError, ValueError):
+        return {}
+
+
+def wanted_style(s):
+    if "overlay" not in s.get("theme_parts", []):
         return None
-    if s.get("theme", "off") == "off" or "overlay" not in s.get("theme_parts", []):
-        return None
-    return {"newyear": "snow", "halloween": "embers"}.get(s["theme"])
+    return {"newyear": "snow", "halloween": "embers"}.get(themes.active(s.get("theme", "off")))
+
+
+def refresh_auto_theme(s):
+    """Тема «по дате»: когда наступил другой праздник, перекладываем файлы (пока Roblox закрыт)."""
+    if s.get("theme") == "auto" and themes.active("auto") != s.get("theme_applied"):
+        subprocess.run([sys.executable, f"{HERE}/soberstrap.py", "--apply"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class Particle:
@@ -127,7 +142,11 @@ def main():
         QTimer.singleShot(8000, app.quit)
     elif "--watch" in sys.argv:
         def check():
-            style = wanted_style() if sober_running() else None
+            s = load_state()
+            running = sober_running()
+            if not running:
+                refresh_auto_theme(s)
+            style = wanted_style(s) if running else None
             if style != ov.style:
                 ov.stop()
                 if style:
