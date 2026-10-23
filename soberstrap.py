@@ -37,7 +37,9 @@ SOBER_LOGS = f"{SOBER_DATA}/sober_logs"
 HERE = os.path.dirname(os.path.realpath(__file__))
 AUTOSTART = os.path.expanduser("~/.config/autostart/soberstrap-overlay.desktop")
 sys.path.insert(0, HERE)
-import themes  # noqa: E402 — рядом с этим файлом
+import effects  # noqa: E402 — модули лежат рядом с этим файлом
+import sky  # noqa: E402
+import themes  # noqa: E402
 
 CURSOR_DIR = "content/textures/Cursors/KeyboardMouse"
 CURSOR_FILES = {"ArrowFarCursor.png": "normal", "ArrowCursor.png": "hover"}
@@ -110,6 +112,7 @@ DEFAULT_STATE = {
     "theme": "off", "theme_parts": list(themes.PARTS),
     "hud": "off", "hud_pos": "top-left",
     "filter": "off", "filter_params": {}, "sharpen": 0.0,
+    "sky": "off", "sky_file": "", "explosion": "off", "forcefield": "off",
 }
 
 # Tokyo Night, спокойно
@@ -377,6 +380,11 @@ def build_files(state):
             src = font_file(state["font"], weight)
             if src:
                 files[target] = ("copy", src)
+    if state["sky"] in sky.PRESETS or (state["sky"] == "file" and state["sky_file"]):
+        for rel, data in sky.sky_files(state["sky"], state["sky_file"]).items():
+            files[rel] = ("bytes", data)
+    for rel, data in effects.effect_files(SOBER_DATA, state["explosion"], state["forcefield"]).items():
+        files[rel] = ("bytes", data)
     for mod in folder_mods():
         if state["mods"].get(mod["id"]):
             for root, _, names in os.walk(f"{mod['path']}/content"):
@@ -412,6 +420,9 @@ def apply_mods(state):
             fmt = {"jpg": "JPG", "dds": "DDS"}.get(rel.rsplit(".", 1)[-1], "PNG")
             if not src.save(dst, fmt):
                 raise OSError(f"не удалось записать {dst}")
+        elif kind == "bytes":
+            with open(dst, "wb") as f:
+                f.write(src)
         else:
             shutil.copyfile(src, dst)
     save_json(MANIFEST, sorted(files))
@@ -432,7 +443,7 @@ def apply_config(state):
     if not state["grass"]:
         flags["FIntFRMMaxGrassDistance"] = 0
         flags["FIntFRMMinGrassDistance"] = 0
-    if state["gray_sky"]:
+    if state["gray_sky"] and state["sky"] == "off":  # серое небо закрыло бы своё
         flags["FFlagDebugSkyGray"] = True
     cfg["fflags"] = flags
     for key, value in state.get("sober", {}).items():
@@ -526,11 +537,12 @@ class Window(QWidget):
         self.state = {**DEFAULT_STATE, **load_json(STATE, {})}
         self.setWindowTitle(APP)
         self.setWindowIcon(QIcon(f"{HERE}/icon.svg"))
-        self.resize(620, 640)
+        self.resize(780, 700)
 
         tabs = QTabWidget()
         tabs.addTab(self.mods_tab(), "Моды")
         tabs.addTab(self.themes_tab(), "Темы")
+        tabs.addTab(self.world_tab(), "Небо и эффекты")
         tabs.addTab(self.filters_tab(), "Фильтры")
         tabs.addTab(self.graphics_tab(), "Графика")
         tabs.addTab(self.history_tab(), "История игр")
@@ -612,6 +624,82 @@ class Window(QWidget):
         lay.addStretch(1)
         self.update_preview()
         return w
+
+    def world_tab(self):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        box = QGroupBox("Небо")
+        f = QVBoxLayout(box)
+        self.sky_combo = QComboBox()
+        self.sky_combo.addItem("Как в Roblox", "off")
+        for key, (name, _) in sky.PRESETS.items():
+            self.sky_combo.addItem(name, key)
+        self.sky_combo.addItem("Своя панорама…", "file")
+        self.sky_combo.setCurrentIndex(max(0, self.sky_combo.findData(self.state["sky"])))
+        self.sky_combo.currentIndexChanged.connect(self.on_sky)
+        f.addWidget(self.sky_combo)
+        self.sky_preview = QLabel()
+        self.sky_preview.setFixedHeight(130)
+        f.addWidget(self.sky_preview)
+        f.addWidget(hint("Меняется небо по умолчанию: его видно в играх, где автор не поставил своё. "
+                         "Своя картинка лучше всего — панорама 360° (ширина в 2 раза больше высоты). "
+                         "Своё небо отключает «серое небо»."))
+        lay.addWidget(box)
+
+        box = QGroupBox("Цвет эффектов")
+        form = QFormLayout(box)
+        self.expl_combo = QComboBox()
+        self.ff_combo = QComboBox()
+        for combo, key in ((self.expl_combo, "explosion"), (self.ff_combo, "forcefield")):
+            for k, (name, _) in effects.COLORS.items():
+                combo.addItem(name, k)
+            combo.setCurrentIndex(max(0, combo.findData(self.state[key])))
+        self.expl_combo.currentIndexChanged.connect(self.update_expl_preview)
+        self.expl_preview = QLabel()
+        self.expl_preview.setFixedSize(64, 64)
+        row = QHBoxLayout()
+        row.addWidget(self.expl_combo, 1)
+        row.addWidget(self.expl_preview)
+        form.addRow("Взрывы", row)
+        form.addRow("Силовое поле", self.ff_combo)
+        form.addRow(hint("Перекрашиваются стандартные взрывы и силовое поле Roblox. "
+                         "Если игра рисует свои эффекты, они останутся как есть."))
+        lay.addWidget(box)
+        lay.addStretch(1)
+        self.update_sky_preview()
+        self.update_expl_preview()
+        return w
+
+    def on_sky(self):
+        if self.sky_combo.currentData() == "file":
+            path, _ = QFileDialog.getOpenFileName(self, "Панорама неба", os.path.expanduser("~"),
+                                                  "Картинки (*.png *.jpg *.jpeg *.webp)")
+            if path:
+                self.state["sky_file"] = path
+            elif not self.state["sky_file"]:
+                self.sky_combo.setCurrentIndex(0)
+        self.update_sky_preview()
+
+    def update_sky_preview(self):
+        key = self.sky_combo.currentData()
+        if key == "off" or (key == "file" and not self.state["sky_file"]):
+            self.sky_preview.clear()
+            return
+        try:
+            img = sky.preview(key, self.state["sky_file"], 540, 130)
+        except OSError:
+            self.sky_preview.clear()
+            return
+        self.sky_preview.setPixmap(QPixmap.fromImage(QImage(img.tobytes(), img.width, img.height,
+                                                            img.width * 3, QImage.Format_RGB888).copy()))
+
+    def update_expl_preview(self):
+        img = effects.preview(SOBER_DATA, self.expl_combo.currentData())
+        if img is None:
+            self.expl_preview.clear()
+            return
+        self.expl_preview.setPixmap(QPixmap.fromImage(QImage(img.tobytes(), img.width, img.height,
+                                                             img.width * 4, QImage.Format_RGBA8888).copy()))
 
     def themes_tab(self):
         w = QWidget()
@@ -945,6 +1033,9 @@ class Window(QWidget):
         s["sharpen"] = self.sharpen_slider.value() / 100
         s["hud"] = self.hud_combo.currentData()
         s["hud_pos"] = self.hud_pos_combo.currentData()
+        s["sky"] = self.sky_combo.currentData()
+        s["explosion"] = self.expl_combo.currentData()
+        s["forcefield"] = self.ff_combo.currentData()
         s["theme"] = self.theme_combo.currentData()
         s["theme_parts"] = [k for k, cb in self.part_checks.items() if cb.isChecked()]
         return s
@@ -954,6 +1045,9 @@ class Window(QWidget):
             QMessageBox.information(self, APP, "Roblox (Sober) сейчас запущен. Закрой его — изменения "
                                                "подхватятся только при следующем запуске.")
             return False
+        self.status.setText("Применяю… (своё небо рисуется секунд 15)")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
         try:
             state = self.collect()
             n = apply_mods(state)
@@ -962,8 +1056,11 @@ class Window(QWidget):
             save_json(STATE, state)
             set_overlay(state)
         except Exception as e:  # noqa: BLE001 — показываем пользователю любую ошибку
+            QApplication.restoreOverrideCursor()
+            self.status.setText("")
             QMessageBox.warning(self, APP, f"Не получилось применить:\n{e}")
             return False
+        QApplication.restoreOverrideCursor()
         self.status.setText(f"Готово: файлов модов — {n}. Запусти Roblox.")
         return True
 

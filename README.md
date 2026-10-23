@@ -9,6 +9,8 @@ Bloxstrap-like manager. Only things you see yourself: cursors, UI font, graphics
 * **Filters** — ten post-processing looks drawn on top of the finished frame (vivid, cinema, dream, cartoon,
   comic, pixel-art, retro TV, noir, winter, Halloween) plus AMD CAS sharpening. Uses vkBasalt as a Flatpak Vulkan
   layer — `scripts/build-vkbasalt-ext.sh` builds and installs it (Sober only loads layers from Flatpak extensions).
+* **Sky and effects** — six generated default skyboxes (starry night, aurora, sunset, space, pastel clouds,
+  Tokyo Night) or your own 360° panorama; explosion and force-field colours recoloured from Roblox's own textures.
 * **Themes** — New Year and Halloween: cursor, sun/moon, loading spinner, pause-menu glow, sparkles, and a
   click-through snow/embers overlay; or switch automatically by date.
 * **FPS counter** — MangoHud with a few presets.
