@@ -1,27 +1,83 @@
 # SoberStrap
 
-Cosmetic mods and graphics settings for [Sober](https://sober.vinegarhq.org/) (Roblox on Linux) — a small
-Bloxstrap-like manager. Only things you see yourself: cursors, UI font, graphics quality. No gameplay changes.
+A Bloxstrap-like manager for [Sober](https://sober.vinegarhq.org/), the Roblox client for Linux: cosmetic mods,
+graphics filters and settings. Everything changes only what **you** see on your own screen. There are no gameplay
+changes, cheats or injected scripts.
 
-* **Cursors** — built-in styles (clean arrow, dot, crosshair) or your own picture.
-* **UI font** — any installed font (with Cyrillic), or a font file.
-* **Graphics** — Sober's quality mode plus Roblox's allow-listed FFlags (quality level, MSAA, textures, grass, gray sky).
-* **Filters** — ten post-processing looks drawn on top of the finished frame (vivid, cinema, dream, cartoon,
-  comic, pixel-art, retro TV, noir, winter, Halloween) plus AMD CAS sharpening. Uses vkBasalt as a Flatpak Vulkan
-  layer — `scripts/build-vkbasalt-ext.sh` builds and installs it (Sober only loads layers from Flatpak extensions).
-* **Sky and effects** — six generated default skyboxes (starry night, aurora, sunset, space, pastel clouds,
-  Tokyo Night) or your own 360° panorama; explosion and force-field colours recoloured from Roblox's own textures.
-* **Themes** — New Year and Halloween: cursor, sun/moon, loading spinner, pause-menu glow, sparkles, and a
-  click-through snow/embers overlay; or switch automatically by date.
-* **FPS counter** — MangoHud with a few presets.
-* **Game history** — what you played and for how long, with "play again" / "same server".
-* **Folder mods** — drop a folder with Roblox's `content/...` structure into `~/.local/share/soberstrap/mods/`.
-* **Reset** — one button removes every file it placed and restores the config.
+> The interface is in Russian for now. Russian README: [README.ru.md](README.ru.md).
 
-Files go to Sober's `asset_overlay`; changes apply on the next Sober launch.
+## Features
+
+* **Filters**: ten post-processing looks applied to the finished frame. They are vivid, cinema, dream, cartoon,
+  comic, pixel art, retro TV, noir, winter and Halloween, each with sliders. AMD CAS sharpening can be used with any
+  of them or on its own. On Windows, Roblox's anti-cheat blocks ReShade. Here the same idea works through
+  [vkBasalt](https://github.com/DadSchoorse/vkBasalt).
+* **Themes**: New Year and Halloween. Each changes the cursor, sun and moon, loading spinner, pause-menu glow and
+  sparkles. It also adds snow or embers in a click-through overlay above the game. A theme can be switched
+  automatically by date.
+* **Cursors**: a clean arrow, a dot, a crosshair, or your own picture.
+* **UI font**: any installed font that has Cyrillic, or a font file.
+* **Graphics**: Sober's quality mode plus the FFlags that Roblox allows since September 2025. These cover quality
+  level, MSAA, textures, grass and gray sky.
+* **FPS counter**: [MangoHud](https://github.com/flightlessmango/MangoHud) presets.
+* **Game history**: what you played and for how long, read from Sober's logs. It has "play again" and
+  "same server" buttons.
+* **Sky and effect colours** *(experimental, not confirmed to work in game yet)*:
+  * six generated default skies or your own 360° panorama;
+  * explosion and force-field colours recoloured from Roblox's own textures.
+* **Folder mods**: put a folder with Roblox's `content/...` structure into `~/.local/share/soberstrap/mods/`.
+* **Reset**: one button removes every file SoberStrap placed and restores Sober's config.
+
+Mods go to Sober's `asset_overlay` directory. Filters and the FPS counter are environment variables set with
+`flatpak override --user`. Changes apply on the next Sober launch.
+
+## Install
+
+Requirements:
+
+* Sober (`flatpak install flathub org.vinegarhq.Sober`), launched at least once;
+* Python 3 with `PySide6`, `numpy` and `Pillow`, plus fontconfig.
+
+Run these commands:
 
 ```
-python3 soberstrap.py      # needs PySide6 and fontconfig
+git clone https://github.com/iosifsid857-dev/soberstrap && cd soberstrap
+python3 soberstrap.py
 ```
 
-MIT license. Not affiliated with Roblox or VinegarHQ.
+### FPS counter
+
+Install MangoHud for Flatpak. The branch must match Sober's runtime, which is currently 26.08:
+
+```
+flatpak install flathub runtime/org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/26.08
+```
+
+### Filters
+
+Sober only loads Vulkan layers that come from Flatpak extensions, and Flathub has no vkBasalt for 26.08 yet. The
+script below builds vkBasalt and installs it as a local Flatpak extension.
+
+It needs these build tools:
+
+* `git`, `meson`, `ninja`, `g++`
+* `glslang`, `vulkan-headers`, `libX11-devel`
+
+```
+scripts/build-vkbasalt-ext.sh
+```
+
+## Notes
+
+* Snow, embers and the FPS counter can be hidden at any time. Press right Shift + F12 to toggle the FPS counter.
+* Your own skies and fonts work only where the game itself doesn't override them.
+* SoberStrap is not affiliated with Roblox, VinegarHQ or Bloxstrap.
+
+## Support
+
+If you find SoberStrap useful, you can support the author: [Monobank jar](https://send.monobank.ua/jar/ABkwFDAY2V).
+
+## Credits
+
+SoberStrap is MIT licensed. Filters run on vkBasalt (zlib) and the FPS counter on MangoHud (MIT). Neither is bundled:
+both are installed separately. Developed together with Claude (Anthropic) as a coding assistant.

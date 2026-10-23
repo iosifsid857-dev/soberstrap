@@ -628,7 +628,7 @@ class Window(QWidget):
     def world_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        box = QGroupBox("Небо")
+        box = QGroupBox("Небо (экспериментально)")
         f = QVBoxLayout(box)
         self.sky_combo = QComboBox()
         self.sky_combo.addItem("Как в Roblox", "off")
@@ -643,7 +643,7 @@ class Window(QWidget):
         f.addWidget(self.sky_preview)
         f.addWidget(hint("Меняется небо по умолчанию: его видно в играх, где автор не поставил своё. "
                          "Своя картинка лучше всего — панорама 360° (ширина в 2 раза больше высоты). "
-                         "Своё небо отключает «серое небо»."))
+                         "Своё небо отключает «серое небо». Пока не подтверждено, что Roblox принимает этот формат."))
         lay.addWidget(box)
 
         box = QGroupBox("Цвет эффектов")
