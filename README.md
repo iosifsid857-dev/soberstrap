@@ -4,7 +4,7 @@ A Bloxstrap-like manager for [Sober](https://sober.vinegarhq.org/), the Roblox c
 graphics filters and settings. Everything changes only what **you** see on your own screen. There are no gameplay
 changes, cheats or injected scripts.
 
-> The interface is in Russian for now. Russian README: [README.ru.md](README.ru.md).
+> The interface is in English and Russian (picked from your system language; force it with `SOBERSTRAP_LANG=en` or `ru`). Russian README: [README.ru.md](README.ru.md).
 
 ## Features
 

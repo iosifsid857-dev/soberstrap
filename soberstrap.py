@@ -38,6 +38,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 AUTOSTART = os.path.expanduser("~/.config/autostart/soberstrap-overlay.desktop")
 sys.path.insert(0, HERE)
 import effects  # noqa: E402 — модули лежат рядом с этим файлом
+from i18n import _ as tr, localize  # noqa: E402
 import themes  # noqa: E402
 
 CURSOR_DIR = "content/textures/Cursors/KeyboardMouse"
@@ -750,7 +751,7 @@ class Window(QWidget):
         self.filter_key = key
         for k, btn in self.filter_buttons.items():
             btn.setChecked(k == key)
-        self.filter_desc.setText(FILTERS[key][1] if key in FILTERS else "Без фильтра — как задумал Roblox.")
+        self.filter_desc.setText(tr(FILTERS[key][1] if key in FILTERS else "Без фильтра — как задумал Roblox."))
         while self.param_form.rowCount():
             self.param_form.removeRow(0)
         self.param_sliders = {}
@@ -760,7 +761,7 @@ class Window(QWidget):
             sl.setRange(int(lo * 100), int(hi * 100))
             sl.setValue(int(self.state["filter_params"].get(uniform, default) * 100))
             self.param_sliders[uniform] = sl
-            self.param_form.addRow(label, sl)
+            self.param_form.addRow(tr(label), sl)
         self.param_box.setVisible(bool(params))
 
     def graphics_tab(self):
@@ -881,15 +882,16 @@ class Window(QWidget):
     def fill_history(self):
         self.history_list.clear()
         if not self.sessions:
-            self.history_list.addItem("Пока пусто — поиграй, и здесь появятся игры.")
+            self.history_list.addItem(tr("Пока пусто — поиграй, и здесь появятся игры."))
             return
         for s in self.sessions:
             game = self.games.get(s["place"], {})
             start = parse_ts(s["start"]).astimezone()
-            text = f"{game.get('name', 'Игра ' + s['place'])}\n{start:%d.%m %H:%M}"
+            text = f"{game.get('name') or tr('Игра {place}').format(place=s['place'])}\n{start:%d.%m %H:%M}"
             if s["end"]:
                 minutes = int((parse_ts(s["end"]) - parse_ts(s["start"])).total_seconds() // 60)
-                text += f"  ·  {minutes // 60} ч {minutes % 60} мин" if minutes >= 60 else f"  ·  {minutes} мин"
+                text += "  ·  " + (tr("{h} ч {m} мин").format(h=minutes // 60, m=minutes % 60) if minutes >= 60
+                                   else tr("{m} мин").format(m=minutes))
             item = QListWidgetItem(text)
             if game.get("icon"):
                 item.setIcon(QIcon(game["icon"]))
@@ -921,7 +923,7 @@ class Window(QWidget):
     def about_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.addWidget(QLabel(f"<b>{APP}</b> — косметические моды для Roblox через Sober."))
+        lay.addWidget(QLabel(tr("<b>{app}</b> — косметические моды для Roblox через Sober.").format(app=APP)))
         lay.addWidget(hint("Только внешний вид и удобство: курсоры, шрифты, графика. Никаких преимуществ в игре — "
                            "SoberStrap меняет файлы у тебя на компьютере, другие игроки ничего не видят. "
                            "Всё снимается кнопкой ниже."))
@@ -929,15 +931,15 @@ class Window(QWidget):
         btn = QPushButton("Вернуть всё как было")
         btn.clicked.connect(self.reset)
         lay.addWidget(btn, 0, Qt.AlignLeft)
-        lay.addWidget(hint(f"Моды: {OVERLAY}\nНастройки Sober: {SOBER_CONFIG}"))
+        lay.addWidget(hint(tr("Моды: {overlay}\nНастройки Sober: {config}").format(overlay=OVERLAY, config=SOBER_CONFIG)))
         lay.addStretch(1)
         return w
 
     # --- обработчики ---
     def on_cursor(self):
         if self.cursor_combo.currentData() == "file":
-            path, _ = QFileDialog.getOpenFileName(self, "Картинка курсора", os.path.expanduser("~"),
-                                                  "Картинки (*.png *.jpg *.webp *.svg)")
+            path, _ = QFileDialog.getOpenFileName(self, tr("Картинка курсора"), os.path.expanduser("~"),
+                                                  tr("Картинки (*.png *.jpg *.webp *.svg)"))
             if path:
                 self.state["cursor_file"] = path
             elif not self.state["cursor_file"]:
@@ -946,15 +948,15 @@ class Window(QWidget):
 
     def on_font(self):
         if self.font_combo.currentData() == "file":
-            path, _ = QFileDialog.getOpenFileName(self, "Файл шрифта", os.path.expanduser("~"),
-                                                  "Шрифты (*.ttf *.otf)")
+            path, _ = QFileDialog.getOpenFileName(self, tr("Файл шрифта"), os.path.expanduser("~"),
+                                                  tr("Шрифты (*.ttf *.otf)"))
             if path:
                 self.state["font_file"] = path
             elif not self.state["font_file"]:
                 self.font_combo.setCurrentIndex(0)
 
     def on_quality(self, v):
-        self.quality_label.setText("авто" if v == 0 else str(v))
+        self.quality_label.setText(tr("авто") if v == 0 else str(v))
 
     def update_preview(self):
         key = self.cursor_combo.currentData()
@@ -995,10 +997,10 @@ class Window(QWidget):
 
     def apply(self):
         if sober_running():
-            QMessageBox.information(self, APP, "Roblox (Sober) сейчас запущен. Закрой его — изменения "
-                                               "подхватятся только при следующем запуске.")
+            QMessageBox.information(self, APP, tr("Roblox (Sober) сейчас запущен. Закрой его — изменения "
+                                                  "подхватятся только при следующем запуске."))
             return False
-        self.status.setText("Применяю… (своё небо рисуется секунд 15)")
+        self.status.setText(tr("Применяю…"))
         QApplication.setOverrideCursor(Qt.WaitCursor)
         QApplication.processEvents()
         try:
@@ -1011,10 +1013,10 @@ class Window(QWidget):
         except Exception as e:  # noqa: BLE001 — показываем пользователю любую ошибку
             QApplication.restoreOverrideCursor()
             self.status.setText("")
-            QMessageBox.warning(self, APP, f"Не получилось применить:\n{e}")
+            QMessageBox.warning(self, APP, tr("Не получилось применить:\n{e}").format(e=e))
             return False
         QApplication.restoreOverrideCursor()
-        self.status.setText(f"Готово: файлов модов — {n}. Запусти Roblox.")
+        self.status.setText(tr("Готово: файлов модов — {n}. Запусти Roblox.").format(n=n))
         return True
 
     def apply_and_play(self):
@@ -1024,7 +1026,7 @@ class Window(QWidget):
 
     def reset(self):
         if sober_running():
-            QMessageBox.information(self, APP, "Сначала закрой Roblox (Sober).")
+            QMessageBox.information(self, APP, tr("Сначала закрой Roblox (Sober)."))
             return
         clear_overlay()
         state = {**DEFAULT_STATE, "graphics_mode": "balanced"}
@@ -1032,7 +1034,7 @@ class Window(QWidget):
         apply_env(state)
         save_json(STATE, state)
         set_overlay(state)
-        QMessageBox.information(self, APP, "Всё вернул как было. Окно закроется.")
+        QMessageBox.information(self, APP, tr("Всё вернул как было. Окно закроется."))
         self.close()
 
 
@@ -1055,6 +1057,7 @@ def main():
     app.setDesktopFileName("soberstrap")
     app.setStyleSheet(STYLE)
     win = Window()
+    localize(win)
     win.show()
     sys.exit(app.exec())
 
