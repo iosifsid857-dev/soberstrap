@@ -22,9 +22,7 @@ changes, cheats or injected scripts.
 * **FPS counter**: [MangoHud](https://github.com/flightlessmango/MangoHud) presets.
 * **Game history**: what you played and for how long, read from Sober's logs. It has "play again" and
   "same server" buttons.
-* **Sky and effect colours** *(experimental, not confirmed to work in game yet)*:
-  * six generated default skies or your own 360° panorama;
-  * explosion and force-field colours recoloured from Roblox's own textures.
+* **Effect colours** *(experimental)*: explosion and force-field colours recoloured from Roblox's own textures.
 * **Folder mods**: put a folder with Roblox's `content/...` structure into `~/.local/share/soberstrap/mods/`.
 * **Reset**: one button removes every file SoberStrap placed and restores Sober's config.
 

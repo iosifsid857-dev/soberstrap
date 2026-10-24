@@ -38,7 +38,6 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 AUTOSTART = os.path.expanduser("~/.config/autostart/soberstrap-overlay.desktop")
 sys.path.insert(0, HERE)
 import effects  # noqa: E402 — модули лежат рядом с этим файлом
-import sky  # noqa: E402
 import themes  # noqa: E402
 
 CURSOR_DIR = "content/textures/Cursors/KeyboardMouse"
@@ -112,7 +111,7 @@ DEFAULT_STATE = {
     "theme": "off", "theme_parts": list(themes.PARTS),
     "hud": "off", "hud_pos": "top-left",
     "filter": "off", "filter_params": {}, "sharpen": 0.0,
-    "sky": "off", "sky_file": "", "explosion": "off", "forcefield": "off",
+    "explosion": "off", "forcefield": "off",
 }
 
 # Tokyo Night, спокойно
@@ -380,9 +379,6 @@ def build_files(state):
             src = font_file(state["font"], weight)
             if src:
                 files[target] = ("copy", src)
-    if state["sky"] in sky.PRESETS or (state["sky"] == "file" and state["sky_file"]):
-        for rel, data in sky.sky_files(state["sky"], state["sky_file"]).items():
-            files[rel] = ("bytes", data)
     for rel, data in effects.effect_files(SOBER_DATA, state["explosion"], state["forcefield"]).items():
         files[rel] = ("bytes", data)
     for mod in folder_mods():
@@ -443,7 +439,7 @@ def apply_config(state):
     if not state["grass"]:
         flags["FIntFRMMaxGrassDistance"] = 0
         flags["FIntFRMMinGrassDistance"] = 0
-    if state["gray_sky"] and state["sky"] == "off":  # серое небо закрыло бы своё
+    if state["gray_sky"]:
         flags["FFlagDebugSkyGray"] = True
     cfg["fflags"] = flags
     for key, value in state.get("sober", {}).items():
@@ -542,7 +538,7 @@ class Window(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self.mods_tab(), "Моды")
         tabs.addTab(self.themes_tab(), "Темы")
-        tabs.addTab(self.world_tab(), "Небо и эффекты")
+        tabs.addTab(self.world_tab(), "Эффекты")
         tabs.addTab(self.filters_tab(), "Фильтры")
         tabs.addTab(self.graphics_tab(), "Графика")
         tabs.addTab(self.history_tab(), "История игр")
@@ -628,24 +624,6 @@ class Window(QWidget):
     def world_tab(self):
         w = QWidget()
         lay = QVBoxLayout(w)
-        box = QGroupBox("Небо (экспериментально)")
-        f = QVBoxLayout(box)
-        self.sky_combo = QComboBox()
-        self.sky_combo.addItem("Как в Roblox", "off")
-        for key, (name, _) in sky.PRESETS.items():
-            self.sky_combo.addItem(name, key)
-        self.sky_combo.addItem("Своя панорама…", "file")
-        self.sky_combo.setCurrentIndex(max(0, self.sky_combo.findData(self.state["sky"])))
-        self.sky_combo.currentIndexChanged.connect(self.on_sky)
-        f.addWidget(self.sky_combo)
-        self.sky_preview = QLabel()
-        self.sky_preview.setFixedHeight(130)
-        f.addWidget(self.sky_preview)
-        f.addWidget(hint("Меняется небо по умолчанию: его видно в играх, где автор не поставил своё. "
-                         "Своя картинка лучше всего — панорама 360° (ширина в 2 раза больше высоты). "
-                         "Своё небо отключает «серое небо». Пока не подтверждено, что Roblox принимает этот формат."))
-        lay.addWidget(box)
-
         box = QGroupBox("Цвет эффектов")
         form = QFormLayout(box)
         self.expl_combo = QComboBox()
@@ -666,32 +644,8 @@ class Window(QWidget):
                          "Если игра рисует свои эффекты, они останутся как есть."))
         lay.addWidget(box)
         lay.addStretch(1)
-        self.update_sky_preview()
         self.update_expl_preview()
         return w
-
-    def on_sky(self):
-        if self.sky_combo.currentData() == "file":
-            path, _ = QFileDialog.getOpenFileName(self, "Панорама неба", os.path.expanduser("~"),
-                                                  "Картинки (*.png *.jpg *.jpeg *.webp)")
-            if path:
-                self.state["sky_file"] = path
-            elif not self.state["sky_file"]:
-                self.sky_combo.setCurrentIndex(0)
-        self.update_sky_preview()
-
-    def update_sky_preview(self):
-        key = self.sky_combo.currentData()
-        if key == "off" or (key == "file" and not self.state["sky_file"]):
-            self.sky_preview.clear()
-            return
-        try:
-            img = sky.preview(key, self.state["sky_file"], 540, 130)
-        except OSError:
-            self.sky_preview.clear()
-            return
-        self.sky_preview.setPixmap(QPixmap.fromImage(QImage(img.tobytes(), img.width, img.height,
-                                                            img.width * 3, QImage.Format_RGB888).copy()))
 
     def update_expl_preview(self):
         img = effects.preview(SOBER_DATA, self.expl_combo.currentData())
@@ -1033,7 +987,6 @@ class Window(QWidget):
         s["sharpen"] = self.sharpen_slider.value() / 100
         s["hud"] = self.hud_combo.currentData()
         s["hud_pos"] = self.hud_pos_combo.currentData()
-        s["sky"] = self.sky_combo.currentData()
         s["explosion"] = self.expl_combo.currentData()
         s["forcefield"] = self.ff_combo.currentData()
         s["theme"] = self.theme_combo.currentData()
